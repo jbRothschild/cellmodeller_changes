@@ -40,7 +40,7 @@ class CLBacterium:
         self.frame_no = 0
         self.simulator = simulator
         self.regulator = None
-        
+
         self.time_begin = time.time()
         self.seconds_elapsed = 0
         self.minutes_elapsed = 0
@@ -142,6 +142,9 @@ class CLBacterium:
         self.initCellState(daughter1State)
         self.initCellState(daughter2State)
 
+    def delete(self, state):
+        self.delete_cell(state.idx)
+
     def init_cl(self):
         if self.simulator:
             (self.context, self.queue) = self.simulator.getOpenCL()
@@ -180,7 +183,7 @@ class CLBacterium:
         self.vdot = ReductionKernel(self.context, numpy.float32, neutral="0",
                 reduce_expr="a+b", map_expr="dot(x[i].s0123,y[i].s0123)+dot(x[i].s4567,y[i].s4567)",
                 arguments="__global float8 *x, __global float8 *y")
-    
+
 
     def init_data(self):
         """Set up the data OpenCL will store on the device."""
@@ -268,7 +271,7 @@ class CLBacterium:
         self.fr_ents_dev = cl_array.zeros(self.queue, mat_geom, vec.float8)
         self.to_ents = numpy.zeros(mat_geom, vec.float8)
         self.to_ents_dev = cl_array.zeros(self.queue, mat_geom, vec.float8)
-        
+
 
         # vectors and intermediates
         self.deltap = numpy.zeros(cell_geom, vec.float8)
@@ -284,7 +287,11 @@ class CLBacterium:
         self.Ap_dev = cl_array.zeros(self.queue, cell_geom, vec.float8)
         self.res_dev = cl_array.zeros(self.queue, cell_geom, vec.float8)
         self.rhs_dev = cl_array.zeros(self.queue, cell_geom, vec.float8)
-    
+
+        # cell deletion
+        self.isDeleted = numpy.zeros(cell_geom, numpy.int32)
+        self.isDeleted_dev = cl_array.zeros(self.queue, cell_geom, numpy.int32)
+
 
     def load_from_cellstates(self, cell_states):
         for (cid,cs) in cell_states.items():
@@ -293,7 +300,7 @@ class CLBacterium:
             self.cell_dirs[i] = tuple(cs.dir)+(0,)
             self.cell_rads[i] = cs.radius
             self.cell_lens[i] = cs.length
-        
+
         self.n_cells = len(cell_states)
         self.set_cells()
         self.calc_cell_area(self.cell_areas_dev, self.cell_rads_dev, self.cell_lens_dev)
@@ -484,11 +491,11 @@ class CLBacterium:
 
     def progress_init(self, dt):
         self.set_cells()
-        # NOTE: by default self.dt=None, and time step == simulator time step (dt) 
+        # NOTE: by default self.dt=None, and time step == simulator time step (dt)
         if self.dt:
-            self.n_ticks = int(math.ceil(dt/self.dt)) 
+            self.n_ticks = int(math.ceil(dt/self.dt))
         else:
-            self.n_ticks = 1 
+            self.n_ticks = 1
         #print "n_ticks = %d"%(self.n_ticks)
         self.actual_dt = dt / float(self.n_ticks)
         self.progress_initialised = True
@@ -505,8 +512,8 @@ class CLBacterium:
         self.frame_no += 1
         self.progress_initialised = False
         self.seconds_elapsed = numpy.float32(time.time() - self.time_begin)
-        self.minutes_elapsed = (numpy.float32(self.seconds_elapsed) / 60.0)  
-        self.hours_elapsed = (numpy.float32(self.minutes_elapsed) / 60.0)  
+        self.minutes_elapsed = (numpy.float32(self.seconds_elapsed) / 60.0)
+        self.hours_elapsed = (numpy.float32(self.minutes_elapsed) / 60.0)
         if self.frame_no % 10 == 0:
             print '% 8i    % 8i cells    % 8i contacts    %f hour(s) or %f minute(s) or %f second(s)' % (self.frame_no, self.n_cells, self.n_cts, self.hours_elapsed, self.minutes_elapsed, self.seconds_elapsed)
         # pull cells from the device and update simulator
@@ -601,7 +608,7 @@ class CLBacterium:
         state.length = self.cell_lens[i]
         #for effective growth calulations
         state.oldLen = self.cell_lens[i]
-        
+
         state.volume = state.length # TO DO: do something better here
         pa = numpy.array(state.pos)
         da = numpy.array(state.dir)
@@ -785,6 +792,7 @@ class CLBacterium:
                                    self.ct_reldists_dev.data,
                                    self.ct_stiff_dev.data,
                                    self.ct_overlap_dev.data).wait()
+                                   #self.isDeleted_dev.data).wait()
 
         # set dtype to int32 so we don't overflow the int32 when summing
         #self.n_cts = self.cell_n_cts_dev.get().sum(dtype=numpy.int32)
@@ -847,7 +855,7 @@ class CLBacterium:
                                   self.fr_ents_dev.data,
                                   self.to_ents_dev.data,
                                   self.ct_stiff_dev.data).wait()
-    
+
 
     def calculate_Ax(self, Ax, x, dt):
 
@@ -890,7 +898,7 @@ class CLBacterium:
         #this was altered from dt*reg_param
         self.vaddkx(Ax, self.reg_param, Ax, self.Minvx_dev).wait()
         # 1/math.sqrt(self.n_cells) removed from the reg_param NB
-    
+
         #print(self.Minvx_dev)
 
     def CGSSolve(self, dt, substep=False):
@@ -934,7 +942,7 @@ class CLBacterium:
         # max iters = matrix dimension = 7 (dofs) * num cells
         #dying=False
         max_iters = self.n_cells*7
-            
+
         for iter in range(max_iters):
             # Ap
             self.calculate_Ax(self.Ap_dev[0:self.n_cells], self.p_dev[0:self.n_cells], dt)
@@ -1106,6 +1114,14 @@ class CLBacterium:
         #return indices of daughter cells
         return (a,b)
 
+    def delete_cell(self, i):
+        """ Remove cell with idx = i from the mechanics algorithm."""
+        # For now, we're simply hiding it from the contact finderself.
+        #It technically still exists, but we'll have to delete some other way
+
+        self.isDeleted[i] = 1
+        self.isDeleted_dev.set(self.isDeleted)
+
 
     def calc_cell_geom(self):
         """Calculate cell geometry using lens/rads on card."""
@@ -1183,5 +1199,3 @@ class CLBacterium:
         t2 = time.clock()
         print "CGS timing for 1000 calls, time per call (s) = %f"%((t2-t1)*0.001)
         open("cgs_prof","a").write( "%i, %i, %i, %f\n"%(self.n_cells,self.n_cts,iters,(t2-t1)*0.001) )
-
-

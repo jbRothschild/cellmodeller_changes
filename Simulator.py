@@ -95,7 +95,7 @@ visualised.
                 reload(self.module)
             else:
                 self.module = __import__(self.moduleName, globals(), locals(), [], -1)
-            
+
 
         # TJR: What is this invar thing? I have never seen this used...
         #setup the simulation here:
@@ -113,7 +113,7 @@ visualised.
             self.outputSteps = outputSteps
             self.init_data_output(outputFileDir)
         '''
-        
+
         # Call the user-defined setup function on ourself
         self.module.setup(self)
 
@@ -130,7 +130,7 @@ visualised.
         if 'CMPATH' in os.environ:
             self.outputDirPath = os.path.join(os.environ["CMPATH"], self.outputDirPath)
 
-        # Add a number to end of dir name if it already exists 
+        # Add a number to end of dir name if it already exists
         label = 2
         while os.path.exists(self.outputDirPath):
             if label>2:
@@ -140,7 +140,7 @@ visualised.
             label+=1
         os.mkdir(self.outputDirPath)
 
-        # write a copy of the model into the dir (for reference), 
+        # write a copy of the model into the dir (for reference),
         # this goes in the pickle too (and gets loaded when a pickle is loaded)
         if self.moduleStr:
             self.moduleOutput = self.moduleStr
@@ -205,7 +205,7 @@ visualised.
             print "Specified OpenCL platform number (%d) does not exist."
             print "Options are:"
             for p in range(len(platforms)):
-                print "%d: %s"%(p, str(platforms[p])) 
+                print "%d: %s"%(p, str(platforms[p]))
             return False
         else:
             platform = platforms[platnum]
@@ -216,7 +216,7 @@ visualised.
             print "Specified OpenCL device number (%d) does not exist on platform %s."%(devnum,platform)
             print "Options are:"
             for d in range(len(devices)):
-                print "%d: %s"%(d, str(devices[d])) 
+                print "%d: %s"%(d, str(devices[d]))
             return False
         else:
             device = devices[devnum]
@@ -229,8 +229,8 @@ visualised.
         print "  Platform: %s"%(str(platform.name))
         print "  Device: %s"%(str(device.name))
         return True
-        
-    ## Get the OpenCL context and queue for running kernels 
+
+    ## Get the OpenCL context and queue for running kernels
     def getOpenCL(self):
         return (self.CLContext, self.CLQueue)
 
@@ -254,11 +254,11 @@ visualised.
         self._next_idx = len(cellStates)
         self.reg.cellStates = cellStates
         self.phys.load_from_cellstates(cellStates)
-    
+
     ## Add a graphics renderer - this should not be here --> GUI
     def addRenderer(self, renderer):
         self.renderers.append(renderer)
-        
+
     ## Reset the simulation back to initial conditions
     def reset(self):
         # Delete existing models
@@ -271,7 +271,7 @@ visualised.
         if self.reg:
             del self.reg
 
-        if not self.moduleStr: 
+        if not self.moduleStr:
             #This will take up any changes made in the model file
             reload(self.module)
         else:
@@ -283,6 +283,18 @@ visualised.
         # Recreate models via module setup
         self.module.setup(self)
 
+    def kill(self, state):
+        # I've had to define killState functions in reg and physcs (biophysics)
+
+        # Carry out action listed in module
+        self.reg.kill(state)
+
+        #mask the cell from any other bit of the algorithm
+        self.phys.delete(state)
+
+        # delete the instance of the cell at cellState levels
+        cid = state.id
+        del self.cellStates[cid]
 
     # Divide a cell to two daughter cells
     def divide(self, pState):
@@ -301,7 +313,7 @@ visualised.
         #inherit effGrowth
         d1State.effGrowth = pState.effGrowth
         d2State.effGrowth = pState.effGrowth
-        
+
         self.lineage[d1id] = pid
         self.lineage[d2id] = pid
 
@@ -358,6 +370,8 @@ visualised.
         self.reg.step(self.dt)
         states = dict(self.cellStates)
         for (cid,state) in states.items():
+            if state.deathFlag:
+                self.kill(state)
             if state.divideFlag:
                 self.divide(state) #neighbours no longer current
 
@@ -433,5 +447,3 @@ visualised.
                 self.integ.setLevels(data['specData'],data['sigData'])
             elif data.has_key('specData'):
                 self.integ.setLevels(data['specData'])
-
-

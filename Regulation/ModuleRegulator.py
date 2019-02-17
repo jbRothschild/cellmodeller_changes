@@ -13,7 +13,7 @@ class ModuleRegulator:
         self.signal = signalling
         # Simulator is responsible for loading the model as a python module
         # This class uses the module imported by Simulator
-        self.module = sim.module 
+        self.module = sim.module
 
     def addCell(self, cellState, **kwargs):
         self.module.init(cellState, **kwargs)
@@ -32,7 +32,7 @@ class ModuleRegulator:
 
     def specRateCL(self):
         return self.module.specRateCL()
-    
+
     def signalRates(self, cstate, speciesLevels, signalLevels):
         return self.module.signalRates(cstate, speciesLevels, signalLevels)
 
@@ -58,4 +58,8 @@ class ModuleRegulator:
         if callable(divfunc):
             divfunc(pState, d1State, d2State)
 
-
+    def kill(self, state):
+        # Call the module's optional kill functions
+        killfunc = getattr(self.module, "kill", None)
+        if callable(killfunc):
+            killfunc(state)
